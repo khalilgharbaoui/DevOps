@@ -1,0 +1,21 @@
+#!/bin/bash
+#
+# Provision script
+#
+# Run this script to provision a new stack:
+#
+#   ./provision
+#
+# The name of the stack defaults to your local login name (whoami) and is
+# configurable by setting STACK_NAME:
+#
+#   STACK_NAME=my-stack ./provision
+#
+if [ -z $STACK_NAME ]; then
+  STACK_NAME=$(whoami)
+fi
+
+echo "Provisioning Stack ${STACK_NAME}"
+aws cloudformation create-stack \
+    --template-body "$(cat vpc.json)" \
+    --stack-name "${STACK_NAME}"

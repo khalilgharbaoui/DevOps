@@ -1,0 +1,266 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+  "Description": "Energiebespaarders on AWS",
+  "Parameters" : {
+   "KeyPair" : {
+     "Description" : "Name of an existing EC2 KeyPair to enable SSH access to the EC2 hosts",
+     "Type" : "String",
+     "MinLength": "1",
+     "MaxLength": "64",
+     "AllowedPattern" : "[-_ a-zA-Z0-9]*",
+     "ConstraintDescription" : "can contain only alphanumeric characters, spaces, dashes and underscores."
+   },
+   "RootVolumeSize": {
+     "Description": "Desired size of the root volume, in GB",
+     "Type": "Number",
+     "Default": "50"
+   },
+   "EC2EBSVolumeType" : {
+     "Description" : "EC2 EBS VolumeType",
+     "Type": "String",
+     "Default": "standard",
+     "AllowedValues" : [ "gp2", "standard" ],
+     "ConstraintDescription" : "must be either 'gp2' for SSD or 'standard' for magnetic (provisioned iOPS requires further manual changes)"
+   }
+ },
+  "Mappings" : {
+    "SubnetConfig" : {
+      "VPC"     : { "CIDR" : "10.21.0.0/16" },
+      "Subnet1" : { "CIDR" : "10.21.1.0/24" },
+      "Subnet2" : { "CIDR" : "10.21.2.0/24" }
+    }
+  },
+  "Resources" : {
+    "VPC" : {
+      "Type" : "AWS::EC2::VPC",
+      "Properties" : {
+        "EnableDnsSupport" : "true",
+        "EnableDnsHostnames" : "true",
+        "CidrBlock" : { "Fn::FindInMap" : [ "SubnetConfig", "VPC", "CIDR" ]},
+        "Tags" : [
+          { "Key" : "Application", "Value" : "Energiebespaarders" }
+        ]
+      }
+    },
+    "VPCSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "Enable public SSH and intra-VPC communication",
+        "SecurityGroupIngress" : [
+          { "IpProtocol": "tcp", "FromPort" : "22",  "ToPort" : "22",  "CidrIp" : "0.0.0.0/0" },
+          {"IpProtocol": "tcp", "FromPort": "80", "ToPort": "80", "SourceSecurityGroupId": { "Ref": "ApiELBSecurityGroup" } },
+          {"IpProtocol": "tcp", "FromPort": "443", "ToPort": "443", "SourceSecurityGroupId": { "Ref": "ApiELBSecurityGroup" } }
+        ],
+        "VpcId" : { "Ref" : "VPC" }
+      }
+    },
+    "VPCSecurityGroupIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Properties": {
+        "GroupId": { "Ref": "VPCSecurityGroup" },
+        "IpProtocol": "-1",
+        "FromPort": "0",
+        "ToPort": "65535",
+        "SourceSecurityGroupId": { "Ref": "VPCSecurityGroup" }
+      }
+    },
+
+
+
+    "ApiELB": {
+      "Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+      "DependsOn" : "GatewayToInternet",
+      "Properties": {
+        "Scheme" : "internet-facing",
+        "HealthCheck": {
+          "HealthyThreshold": "4",
+          "Interval": "15",
+          "Target": "HTTP:80/",
+          "Timeout": "5",
+          "UnhealthyThreshold": "2"
+        },
+        "Subnets": [
+          { "Ref" : "Subnet1" },
+          { "Ref" : "Subnet2" }
+        ],
+        "Policies" : [{
+           "PolicyName" : "EnableProxyProtocol",
+           "PolicyType" : "ProxyProtocolPolicyType",
+           "Attributes" : [{
+              "Name"  : "ProxyProtocol",
+              "Value" : "true"
+           }],
+           "InstancePorts" : ["80", "443"]
+        }],
+        "Listeners": [
+          {
+            "InstancePort": "80",
+            "InstanceProtocol": "TCP",
+            "LoadBalancerPort": "80",
+            "Protocol": "TCP"
+          },
+          {
+            "InstancePort": "443",
+            "InstanceProtocol": "TCP",
+            "LoadBalancerPort": "443",
+            "Protocol": "TCP"
+          }
+        ],
+        "SecurityGroups": [
+          {
+            "Fn::GetAtt": ["ApiELBSecurityGroup", "GroupId"]
+          }
+        ],
+        "ConnectionSettings": {
+          "IdleTimeout": 1200
+        }
+      }
+    },
+    "ApiELBSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Api ELB SecurityGroup",
+        "SecurityGroupIngress": [
+          {"IpProtocol": "tcp", "FromPort": "80", "ToPort": "80", "CidrIp": "0.0.0.0/0"},
+          {"IpProtocol": "tcp", "FromPort": "443", "ToPort": "443", "CidrIp": "0.0.0.0/0"}
+        ],
+        "VpcId": { "Ref" : "VPC" }
+      }
+    },
+
+
+    "Subnet1" : {
+      "Type" : "AWS::EC2::Subnet",
+      "Properties" : {
+        "VpcId" : { "Ref" : "VPC" },
+        "AvailabilityZone": { "Fn::Select" : [ 0, { "Fn::GetAZs" : "" } ] },
+        "CidrBlock" : { "Fn::FindInMap" : [ "SubnetConfig", "Subnet1", "CIDR" ]},
+        "Tags" : [
+          { "Key" : "Application", "Value" : "Energiebespaarders" },
+          { "Key" : "Network", "Value" : "Private" }
+        ]
+      }
+    },
+    "Subnet2" : {
+      "Type" : "AWS::EC2::Subnet",
+      "Properties" : {
+        "VpcId" : { "Ref" : "VPC" },
+        "AvailabilityZone": { "Fn::Select" : [ 1, { "Fn::GetAZs" : "" } ] },
+        "CidrBlock" : { "Fn::FindInMap" : [ "SubnetConfig", "Subnet2", "CIDR" ]},
+        "Tags" : [
+          { "Key" : "Application", "Value" : "Energiebespaarders" },
+          { "Key" : "Network", "Value" : "Private" }
+        ]
+      }
+    },
+    "InternetGateway" : {
+      "Type" : "AWS::EC2::InternetGateway",
+      "Properties" : {
+        "Tags" : [
+          { "Key" : "Application", "Value" : "Energiebespaarders" },
+          { "Key" : "Network", "Value" : "Public" }
+        ]
+      }
+    },
+    "GatewayToInternet" : {
+       "Type" : "AWS::EC2::VPCGatewayAttachment",
+       "Properties" : {
+         "VpcId" : { "Ref" : "VPC" },
+         "InternetGatewayId" : { "Ref" : "InternetGateway" }
+       }
+    },
+    "PublicRouteTable" : {
+      "Type" : "AWS::EC2::RouteTable",
+      "DependsOn" : "GatewayToInternet",
+      "Properties" : {
+        "VpcId" : { "Ref" : "VPC" },
+        "Tags" : [
+          { "Key" : "Application", "Value" : "Energiebespaarders" },
+          { "Key" : "Network", "Value" : "Public" }
+        ]
+      }
+    },
+    "PublicRoute" : {
+      "Type" : "AWS::EC2::Route",
+      "DependsOn" : "GatewayToInternet",
+      "Properties" : {
+        "RouteTableId" : { "Ref" : "PublicRouteTable" },
+        "DestinationCidrBlock" : "0.0.0.0/0",
+        "GatewayId" : { "Ref" : "InternetGateway" }
+      }
+    },
+    "Subnet1RouteTableAssociation" : {
+      "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties" : {
+        "SubnetId" : { "Ref" : "Subnet1" },
+        "RouteTableId" : { "Ref" : "PublicRouteTable" }
+      }
+    },
+    "Subnet2RouteTableAssociation" : {
+      "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties" : {
+        "SubnetId" : { "Ref" : "Subnet2" },
+        "RouteTableId" : { "Ref" : "PublicRouteTable" }
+      }
+    },
+
+
+    "ApiServerAutoScale": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Properties": {
+        "AvailabilityZones": [
+          { "Fn::GetAtt" : [ "Subnet1", "AvailabilityZone" ] },
+          { "Fn::GetAtt" : [ "Subnet2", "AvailabilityZone" ] }
+        ],
+        "VPCZoneIdentifier": [
+          { "Ref" : "Subnet1" },
+          { "Ref" : "Subnet2" }
+        ],
+        "LaunchConfigurationName": {"Ref": "ApiServerLaunchConfig"},
+        "MinSize": "1",
+        "MaxSize": "3",
+        "DesiredCapacity": "2",
+        "Tags": [
+            {"Key": "Name", "Value": {"Ref": "KeyPair"}, "PropagateAtLaunch": true}
+        ],
+        "LoadBalancerNames": [
+          { "Ref": "ApiELB" }
+        ]
+      }
+    },
+    "ApiServerLaunchConfig": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "DependsOn" : "GatewayToInternet",
+      "Properties": {
+        "ImageId" : "ami-f3659d9c",
+        "InstanceType": "t2.micro",
+        "KeyName": {"Ref": "KeyPair"},
+        "UserData" : { "Fn::Base64": { "Fn::Join": [ "\n",
+          [
+            "#!/bin/bash",
+            "sudo yum update -y",
+            "sudo yum install -y docker git",
+            "sudo service docker start",
+            "sudo usermod -a -G docker ec2-user"
+          ] ] } },
+        "AssociatePublicIpAddress": "true",
+        "SecurityGroups": [ { "Fn::GetAtt": ["VPCSecurityGroup", "GroupId"] } ],
+        "BlockDeviceMappings" : [
+          {
+            "DeviceName" : "/dev/xvda",
+            "Ebs" : { "VolumeSize" : { "Ref": "RootVolumeSize" }, "VolumeType": { "Ref": "EC2EBSVolumeType" } }
+          }
+        ]
+      }
+    }
+
+
+
+  },
+  "Outputs" : {
+    "DNSName" : {
+      "Description" : "DNS Name of the ELB",
+      "Value" :  { "Fn::GetAtt" : ["ApiELB", "DNSName"] }
+    }
+  }
+}
