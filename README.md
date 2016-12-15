@@ -1,5 +1,8 @@
 # DevOps
 
+![template-diagram](https://github.com/khalilgharbaoui/DevOps/blob/master/template1-designer.png)
+
+
 ```
 aws cloudformation create-stack \
   --template-body "$(cat vpc.json)" \
